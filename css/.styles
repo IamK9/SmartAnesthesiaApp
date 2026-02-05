@@ -1,0 +1,29 @@
+/* เปลี่ยน Font ทั้งเว็บให้ดูทันสมัย */
+html, body, [class*="css"] {
+    font-family: 'Sarabun', sans-serif; 
+}
+
+/* ปรับแต่ง Header */
+h1 {
+    color: #2E86C1; /* Medical Blue */
+    font-weight: 700;
+}
+
+/* ปรับแต่งปุ่มกด (Button) */
+.stButton>button {
+    background-color: #2E86C1;
+    color: white;
+    border-radius: 10px;
+    border: none;
+    padding: 10px 24px;
+}
+.stButton>button:hover {
+    background-color: #1B4F72;
+    color: white;
+}
+
+/* ปรับแต่งการแสดงผล Metric ให้ดูเด่น */
+[data-testid="stMetricValue"] {
+    font-size: 2rem;
+    color: #E74C3C; /* Emergency Red tone for critical numbers */
+}
