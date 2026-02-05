@@ -1,0 +1,1 @@
+streamlit และ google-generativeai
