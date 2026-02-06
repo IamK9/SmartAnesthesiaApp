@@ -10,7 +10,7 @@ import base64
 st.set_page_config(page_title="Smart Anesthesia", page_icon="💉", layout="wide")
 st.markdown("""<style>.stButton>button {width: 100%; border-radius: 8px; background-color: #2E86C1; color: white;}</style>""", unsafe_allow_html=True)
 
-# --- CLASS สำหรับสร้าง PDF ---
+# --- CLASS สำหรับสร้าง PDF (แก้ Error ภาษาไทย) ---
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 15)
@@ -24,6 +24,11 @@ class PDF(FPDF):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+def clean_for_pdf(text):
+    """ฟังก์ชันตัดตัวอักษรไทยทิ้ง เพื่อไม่ให้ PDF Error"""
+    # แปลงเป็น string -> encode เป็น latin-1 (ถ้าตัวไหนไม่ใช่ ให้แทนที่ด้วย ?) -> decode กลับ
+    return str(text).encode('latin-1', 'replace').decode('latin-1')
 
 # 2. ฟังก์ชันดึงรายชื่อโมเดล
 def get_available_models():
@@ -63,7 +68,7 @@ with st.sidebar:
                 pdf.add_page()
                 pdf.set_font("Arial", size=12)
                 
-                # Mock Patient Info (สมมติข้อมูลผู้ป่วยเพื่อความสมจริง)
+                # Mock Patient Info
                 pdf.cell(200, 10, txt="Patient Name: Mr. Somchai Jai-dee (Test Case)", ln=True)
                 pdf.cell(200, 10, txt=f"Date: {datetime.now().strftime('%Y-%m-%d')}   HN: 67-001234", ln=True)
                 pdf.cell(200, 10, txt="Procedure: Laparoscopic Appendectomy", ln=True)
@@ -80,16 +85,16 @@ with st.sidebar:
                 # Table Data
                 pdf.set_font("Arial", size=10)
                 for index, row in st.session_state.logs.iterrows():
-                    # แปลงข้อมูลเป็น string และตัดไม่ให้ล้น
-                    t = str(row['Time'])
-                    i = str(row['Item'])[:40] 
-                    q = f"{row['Qty']} {row['Unit']}"
-                    c = str(row['Category'])
+                    # --- ใช้ clean_for_pdf ป้องกัน Error ---
+                    t = clean_for_pdf(row['Time'])
+                    i = clean_for_pdf(row['Item'])[:40] 
+                    q = clean_for_pdf(f"{row['Qty']} {row['Unit']}")
+                    c = clean_for_pdf(row['Category'])
                     
                     pdf.cell(30, 10, t, 1)
                     pdf.cell(80, 10, i, 1)
                     pdf.cell(30, 10, q, 1)
-                    pdf.cell(50, 10, c, 1, 1) # จบบรรทัด
+                    pdf.cell(50, 10, c, 1, 1)
                 
                 # Summary Section
                 pdf.ln(10)
@@ -97,7 +102,6 @@ with st.sidebar:
                 pdf.cell(200, 10, "Case Summary:", ln=True)
                 pdf.set_font("Arial", size=10)
                 
-                # Calculate Summary
                 try:
                     narc_sum = pd.to_numeric(st.session_state.logs[st.session_state.logs['Category'] == 'Narcotic']['Qty'], errors='coerce').fillna(0).sum()
                     crit_count = len(st.session_state.logs[st.session_state.logs['Category'] == 'Critical Event'])
@@ -106,13 +110,11 @@ with st.sidebar:
                 except:
                     pass
 
-                # Signature
                 pdf.ln(20)
                 pdf.cell(200, 10, "__________________________", ln=True)
                 pdf.cell(200, 10, "Anesthesiologist Signature", ln=True)
 
-                # Output
-                pdf_bytes = pdf.output(dest='S').encode('latin-1', 'replace') # Handle encoding
+                pdf_bytes = pdf.output(dest='S').encode('latin-1', 'replace') 
                 b64 = base64.b64encode(pdf_bytes).decode()
                 href = f'<a href="data:application/octet-stream;base64,{b64}" download="Anesthesia_Record.pdf" style="text-decoration:none;"><button style="width:100%; background-color:#28B463; color:white; padding:10px; border:none; border-radius:5px; cursor:pointer;">✅ Click to Download PDF</button></a>'
                 st.markdown(href, unsafe_allow_html=True)
@@ -136,7 +138,8 @@ def process_command(cmd):
         Rules:
         1. Return JSON ARRAY of objects.
         2. Keys: "item", "qty", "unit", "category".
-        3. Category list: [Narcotic, Vasoactive, Induction, Muscle Relaxant, Antibiotic, Equipment, Critical Event, General].
+        3. If using Thai input, translate item name to English.
+        4. Category list: [Narcotic, Vasoactive, Induction, Muscle Relaxant, Antibiotic, Equipment, Critical Event, General].
         Example: [ {{"item": "Fentanyl", "qty": 100, "unit": "mcg", "category": "Narcotic"}} ]
         """
         response = model.generate_content(prompt)
@@ -165,29 +168,3 @@ if st.button("🚀 ส่งคำสั่ง (Submit)"):
                 for entry in items_to_save:
                     item = entry.get('item') or entry.get('Item') or "Unknown"
                     qty = entry.get('qty') or entry.get('Qty') or 1
-                    unit = entry.get('unit') or entry.get('Unit') or "-"
-                    cat = entry.get('category') or entry.get('Category') or "General"
-                    
-                    thai_time = (datetime.now() + timedelta(hours=7)).strftime("%H:%M:%S")
-                    
-                    if 'logs' not in st.session_state: 
-                        st.session_state.logs = pd.DataFrame(columns=['Time','Item','Qty','Unit','Category'])
-
-                    new_row = {'Time': thai_time, 'Item': item, 'Qty': qty, 'Unit': unit, 'Category': cat}
-                    st.session_state.logs = pd.concat([pd.DataFrame([new_row]), st.session_state.logs], ignore_index=True)
-                
-                st.success(f"✅ Saved {len(items_to_save)} items!")
-
-# Dashboard
-if 'logs' in st.session_state and not st.session_state.logs.empty:
-    st.divider()
-    st.subheader("📊 Dashboard")
-    try:
-        narc_sum = pd.to_numeric(st.session_state.logs[st.session_state.logs['Category'] == 'Narcotic']['Qty'], errors='coerce').fillna(0).sum()
-        crit_count = len(st.session_state.logs[st.session_state.logs['Category'] == 'Critical Event'])
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Narcotics (Total)", f"{int(narc_sum)}")
-        m2.metric("Critical Events", f"{crit_count}", delta_color="inverse")
-        m3.metric("Total Logs", len(st.session_state.logs))
-    except: pass
-    st.dataframe(st.session_state.logs, use_container_width=True, hide_index=True)
