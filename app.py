@@ -6,11 +6,15 @@ import json
 from fpdf import FPDF
 import base64
 
-# 1. UI SETUP
+# 1. UI SETUP & INITIALIZATION (ย้ายมาไว้บนสุด กัน Dashboard หาย)
 st.set_page_config(page_title="Smart Anesthesia", page_icon="💉", layout="wide")
 st.markdown("""<style>.stButton>button {width: 100%; border-radius: 8px; background-color: #2E86C1; color: white;}</style>""", unsafe_allow_html=True)
 
-# --- CLASS สำหรับสร้าง PDF (แก้ Error ภาษาไทย) ---
+# --- สร้างตารางรอไว้เลย ไม่ต้องรอลูป (แก้ปัญหา Dashboard ไม่ขึ้น) ---
+if 'logs' not in st.session_state: 
+    st.session_state.logs = pd.DataFrame(columns=['Time','Item','Qty','Unit','Category'])
+
+# --- CLASS สำหรับสร้าง PDF ---
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 15)
@@ -26,8 +30,6 @@ class PDF(FPDF):
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
 def clean_for_pdf(text):
-    """ฟังก์ชันตัดตัวอักษรไทยทิ้ง เพื่อไม่ให้ PDF Error"""
-    # แปลงเป็น string -> encode เป็น latin-1 (ถ้าตัวไหนไม่ใช่ ให้แทนที่ด้วย ?) -> decode กลับ
     return str(text).encode('latin-1', 'replace').decode('latin-1')
 
 # 2. ฟังก์ชันดึงรายชื่อโมเดล
@@ -42,7 +44,7 @@ def get_available_models():
         return models
     except: return []
 
-# 3. SIDEBAR: เลือกโมเดล & DOWNLOAD
+# 3. SIDEBAR
 with st.sidebar:
     st.header("⚙️ Settings")
     backup_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
@@ -52,77 +54,46 @@ with st.sidebar:
     default_ix = 0
     if "gemini-2.0-flash" in all_options:
         default_ix = all_options.index("gemini-2.0-flash")
-    elif "gemini-1.5-flash" in all_options:
-        default_ix = all_options.index("gemini-1.5-flash")
     
     selected_model_name = st.selectbox("เลือก AI Model:", all_options, index=default_ix)
     
     st.divider()
     
-    # --- ส่วนสร้าง PDF ---
+    # PDF Export
     st.header("📄 Export Record")
-    if 'logs' in st.session_state and not st.session_state.logs.empty:
+    if not st.session_state.logs.empty:
         if st.button("📥 Generate PDF Report"):
             try:
                 pdf = PDF()
                 pdf.add_page()
                 pdf.set_font("Arial", size=12)
                 
-                # Mock Patient Info
-                pdf.cell(200, 10, txt="Patient Name: Mr. Somchai Jai-dee (Test Case)", ln=True)
-                pdf.cell(200, 10, txt=f"Date: {datetime.now().strftime('%Y-%m-%d')}   HN: 67-001234", ln=True)
-                pdf.cell(200, 10, txt="Procedure: Laparoscopic Appendectomy", ln=True)
+                pdf.cell(200, 10, txt="Patient Name: Mr. Somchai (Test Case)", ln=True)
+                pdf.cell(200, 10, txt=f"Date: {datetime.now().strftime('%Y-%m-%d')}", ln=True)
                 pdf.ln(10)
                 
-                # Table Header
+                # Header
                 pdf.set_fill_color(200, 220, 255)
                 pdf.set_font("Arial", 'B', 10)
-                pdf.cell(30, 10, "Time", 1, 0, 'C', 1)
-                pdf.cell(80, 10, "Item / Event", 1, 0, 'C', 1)
-                pdf.cell(30, 10, "Qty", 1, 0, 'C', 1)
-                pdf.cell(50, 10, "Category", 1, 1, 'C', 1)
+                for h, w in zip(["Time", "Item / Event", "Qty", "Category"], [30, 80, 30, 50]):
+                    pdf.cell(w, 10, h, 1, 0, 'C', 1)
+                pdf.ln()
                 
-                # Table Data
+                # Data
                 pdf.set_font("Arial", size=10)
-                for index, row in st.session_state.logs.iterrows():
-                    # --- ใช้ clean_for_pdf ป้องกัน Error ---
-                    t = clean_for_pdf(row['Time'])
-                    i = clean_for_pdf(row['Item'])[:40] 
-                    q = clean_for_pdf(f"{row['Qty']} {row['Unit']}")
-                    c = clean_for_pdf(row['Category'])
-                    
-                    pdf.cell(30, 10, t, 1)
-                    pdf.cell(80, 10, i, 1)
-                    pdf.cell(30, 10, q, 1)
-                    pdf.cell(50, 10, c, 1, 1)
+                for _, row in st.session_state.logs.iterrows():
+                    pdf.cell(30, 10, clean_for_pdf(row['Time']), 1)
+                    pdf.cell(80, 10, clean_for_pdf(row['Item'])[:40], 1)
+                    pdf.cell(30, 10, clean_for_pdf(f"{row['Qty']} {row['Unit']}"), 1)
+                    pdf.cell(50, 10, clean_for_pdf(row['Category']), 1, 1)
                 
-                # Summary Section
-                pdf.ln(10)
-                pdf.set_font("Arial", 'B', 12)
-                pdf.cell(200, 10, "Case Summary:", ln=True)
-                pdf.set_font("Arial", size=10)
-                
-                try:
-                    narc_sum = pd.to_numeric(st.session_state.logs[st.session_state.logs['Category'] == 'Narcotic']['Qty'], errors='coerce').fillna(0).sum()
-                    crit_count = len(st.session_state.logs[st.session_state.logs['Category'] == 'Critical Event'])
-                    pdf.cell(200, 8, f"- Total Narcotics Usage: {int(narc_sum)} (units)", ln=True)
-                    pdf.cell(200, 8, f"- Critical Events Recorded: {crit_count}", ln=True)
-                except:
-                    pass
-
-                pdf.ln(20)
-                pdf.cell(200, 10, "__________________________", ln=True)
-                pdf.cell(200, 10, "Anesthesiologist Signature", ln=True)
-
-                pdf_bytes = pdf.output(dest='S').encode('latin-1', 'replace') 
+                # Download Button
+                pdf_bytes = pdf.output(dest='S').encode('latin-1', 'replace')
                 b64 = base64.b64encode(pdf_bytes).decode()
-                href = f'<a href="data:application/octet-stream;base64,{b64}" download="Anesthesia_Record.pdf" style="text-decoration:none;"><button style="width:100%; background-color:#28B463; color:white; padding:10px; border:none; border-radius:5px; cursor:pointer;">✅ Click to Download PDF</button></a>'
+                href = f'<a href="data:application/octet-stream;base64,{b64}" download="Anesthesia_Record.pdf" style="text-decoration:none;"><button style="width:100%; background-color:#28B463; color:white; padding:10px; border:none; border-radius:5px;">✅ Click to Download PDF</button></a>'
                 st.markdown(href, unsafe_allow_html=True)
-                
             except Exception as e:
                 st.error(f"PDF Error: {e}")
-    else:
-        st.info("No data to export yet.")
 
 # 4. AI FUNCTION
 def process_command(cmd):
@@ -131,20 +102,21 @@ def process_command(cmd):
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         model = genai.GenerativeModel(selected_model_name)
         
+        # Prompt: เพิ่มคำสั่งให้รองรับ Start Case / เริ่มผ่าตัด ชัดเจนขึ้น
         prompt = f"""
-        Act as an Expert Anesthesia Assistant.
+        Act as an Anesthesia Logger.
         Analyze input: "{cmd}"
-        Task: Extract ALL medical items/events.
+        
         Rules:
-        1. Return JSON ARRAY of objects.
-        2. Keys: "item", "qty", "unit", "category".
-        3. If using Thai input, translate item name to English.
-        4. Category list: [Narcotic, Vasoactive, Induction, Muscle Relaxant, Antibiotic, Equipment, Critical Event, General].
-        Example: [ {{"item": "Fentanyl", "qty": 100, "unit": "mcg", "category": "Narcotic"}} ]
+        1. Return JSON ARRAY. Keys: "item", "qty", "unit", "category".
+        2. If input is Thai, translate item to English.
+        3. If input is an Event (e.g., "Start Case", "เริ่มผ่าตัด", "BP Drop"), set qty=1, unit="event".
+        4. Category list: [General, Narcotic, Antibiotic, Equipment, Critical Event, Induction].
+        
+        Example: [ {{"item": "Start Surgery", "qty": 1, "unit": "event", "category": "General"}} ]
         """
         response = model.generate_content(prompt)
-        text = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(text)
+        return json.loads(response.text.replace("```json", "").replace("```", "").strip())
     except Exception as e:
         return {"error": str(e)}
 
@@ -165,6 +137,38 @@ if st.button("🚀 ส่งคำสั่ง (Submit)"):
             else:
                 items_to_save = res if isinstance(res, list) else [res]
                 
+                # ถ้า AI ส่งมาว่างเปล่า (เช่น แปลไม่ออก) ให้แจ้งเตือน
+                if not items_to_save:
+                    st.warning("⚠️ AI ไม่พบข้อมูลยาหรือเหตุการณ์ในคำสั่งนี้ ลองพิมพ์ใหม่ดูนะครับ")
+                
+                count = 0
                 for entry in items_to_save:
                     item = entry.get('item') or entry.get('Item') or "Unknown"
                     qty = entry.get('qty') or entry.get('Qty') or 1
+                    unit = entry.get('unit') or entry.get('Unit') or "-"
+                    cat = entry.get('category') or entry.get('Category') or "General"
+                    
+                    thai_time = (datetime.now() + timedelta(hours=7)).strftime("%H:%M:%S")
+                    new_row = {'Time': thai_time, 'Item': item, 'Qty': qty, 'Unit': unit, 'Category': cat}
+                    st.session_state.logs = pd.concat([pd.DataFrame([new_row]), st.session_state.logs], ignore_index=True)
+                    count += 1
+                
+                if count > 0:
+                    st.success(f"✅ Saved {count} items!")
+
+# Dashboard (โชว์ตลอดถ้ามีตาราง)
+if 'logs' in st.session_state and not st.session_state.logs.empty:
+    st.divider()
+    st.subheader("📊 Dashboard")
+    try:
+        narc_sum = pd.to_numeric(st.session_state.logs[st.session_state.logs['Category'] == 'Narcotic']['Qty'], errors='coerce').fillna(0).sum()
+        crit_count = len(st.session_state.logs[st.session_state.logs['Category'] == 'Critical Event'])
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Narcotics", f"{int(narc_sum)}")
+        m2.metric("Critical Events", f"{crit_count}", delta_color="inverse")
+        m3.metric("Total Logs", len(st.session_state.logs))
+    except: pass
+    st.dataframe(st.session_state.logs, use_container_width=True, hide_index=True)
+else:
+    # เพิ่มข้อความบอกว่าระบบพร้อมทำงาน
+    st.info("💡 ระบบพร้อมแล้ว! ลองพิมพ์ 'Start Case' หรือ 'Fentanyl 50' ได้เลยครับ")
