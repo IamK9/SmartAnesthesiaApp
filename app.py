@@ -102,7 +102,7 @@ if st.button("🚀 ส่งคำสั่ง (Submit)"):
                     st.session_state.logs = pd.DataFrame(columns=['Time','Item','Qty','Unit','Category'])
                 
                 new_row = {
-                    'Time': datetime.now().strftime("%H:%M:%S"),
+                    'Time': (datetime.now() + timedelta(hours=7)).strftime("%H:%M:%S"),
                     'Item': item_show, 
                     'Qty': qty_show, 
                     'Unit': unit_show, 
