@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta # <--- เพิ่ม timedelta ตรงนี้ให้แล้วครับ
+from datetime import datetime, timedelta
 import google.generativeai as genai
 import json
 
@@ -23,7 +23,6 @@ def get_available_models():
 # 3. SIDEBAR: เลือกโมเดล
 with st.sidebar:
     st.header("⚙️ Settings")
-    
     backup_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
     real_models = get_available_models()
     all_options = sorted(list(set(real_models + backup_models)))
@@ -31,7 +30,6 @@ with st.sidebar:
     # ตั้งค่าเริ่มต้น
     default_ix = 0
     target_model = "gemini-2.0-flash"
-    
     if target_model in all_options:
         default_ix = all_options.index(target_model)
     elif "gemini-1.5-flash" in all_options:
@@ -40,25 +38,33 @@ with st.sidebar:
     selected_model_name = st.selectbox("เลือก AI Model:", all_options, index=default_ix)
     st.info(f"Using: {selected_model_name}")
 
-# 4. AI FUNCTION
+# 4. AI FUNCTION (ฉบับอัปเกรด: สั่งให้ชัดเจนขึ้น + ดักจับ Error)
 def process_command(cmd):
     if "GEMINI_API_KEY" not in st.secrets: return {"error": "API Key Missing"}
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         model = genai.GenerativeModel(selected_model_name)
         
+        # Prompt ที่บังคับโครงสร้าง JSON ให้แม่นยำขึ้น
         prompt = f"""
-        Act as an Anesthesiologist Assistant.
+        Act as an Expert Anesthesia Assistant.
         Analyze input: "{cmd}"
+        
+        Your Goal: Convert voice/text commands into structured data.
+        
         Rules:
-        1. Extract Item, Qty, Unit.
-        2. IF input is a Critical Event (e.g., BP Drop, Desat): Set Category="Critical Event", Qty=1, Unit="event".
-        3. IF input is Drug/Equipment: Classify Category: [Narcotic, Vasoactive, Induction, Muscle Relaxant, Antibiotic, Equipment].
-        Output JSON ONLY.
+        1. Return strictly JSON with keys: "item", "qty", "unit", "category".
+        2. Keys MUST be lowercase.
+        3. If input is an action (e.g., "Intubate Tube 7.5"), map it to the Item (e.g., item="ET Tube No. 7.5", qty=1, unit="piece").
+        4. If input is a Critical Event (e.g., "BP Drop"), set item="Hypotension", qty=1, unit="event", category="Critical Event".
+        5. Category list: [Narcotic, Vasoactive, Induction, Muscle Relaxant, Antibiotic, Equipment, Critical Event, General].
+        
+        Example Output: {{"item": "Fentanyl", "qty": 50, "unit": "mcg", "category": "Narcotic"}}
         """
         
         response = model.generate_content(prompt)
-        return json.loads(response.text.replace("```json", "").replace("```", "").strip())
+        text = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(text)
     except Exception as e:
         return {"error": str(e)}
 
@@ -73,25 +79,33 @@ if st.button("🚀 ส่งคำสั่ง (Submit)"):
     if cmd:
         with st.spinner(f"AI ({selected_model_name}) Processing..."):
             res = process_command(cmd)
+            
             if "error" in res:
                 st.error(f"❌ Error: {res['error']}")
             else:
-                item = res.get('item')
-                qty = res.get('qty')
-                unit = res.get('unit')
-                cat = res.get('cat') or res.get('category') or res.get('Category') # กันเหนียวเรื่องตัวพิมพ์ใหญ่เล็ก
+                # --- จุดแก้สำคัญ: ดักจับตัวพิมพ์เล็ก/ใหญ่ (Case Insensitive) ---
+                # ไม่ว่า AI จะส่ง Item, item, ITEM เราจะจับได้หมด
+                item = res.get('item') or res.get('Item') or res.get('ITEM') or cmd
+                qty = res.get('qty') or res.get('Qty') or res.get('QTY') or 1
+                unit = res.get('unit') or res.get('Unit') or res.get('UNIT') or "-"
+                cat = res.get('category') or res.get('Category') or res.get('cat') or "General"
                 
+                # แสดงผลทันที
                 st.success(f"✅ Saved: {item} ({qty} {unit}) - [{cat}]")
                 
+                # Save Data
                 if 'logs' not in st.session_state: 
                     st.session_state.logs = pd.DataFrame(columns=['Time','Item','Qty','Unit','Category'])
                 
-                # --- จุดที่แก้เวลาไทย (UTC+7) ---
+                # เวลาไทย (UTC+7)
                 thai_time = (datetime.now() + timedelta(hours=7)).strftime("%H:%M:%S")
                 
                 new_row = {
                     'Time': thai_time,
-                    'Item': item, 'Qty': qty, 'Unit': unit, 'Category': cat
+                    'Item': item, 
+                    'Qty': qty, 
+                    'Unit': unit, 
+                    'Category': cat
                 }
                 st.session_state.logs = pd.concat([pd.DataFrame([new_row]), st.session_state.logs], ignore_index=True)
 
@@ -101,12 +115,15 @@ if 'logs' in st.session_state and not st.session_state.logs.empty:
     st.subheader("📊 Dashboard")
     
     try:
-        narc_sum = st.session_state.logs[st.session_state.logs['Category'] == 'Narcotic']['Qty'].sum()
+        # คำนวณยอดรวม (พยายามแปลงเป็นตัวเลขก่อนบวก)
+        narc_sum = pd.to_numeric(st.session_state.logs[st.session_state.logs['Category'] == 'Narcotic']['Qty'], errors='coerce').fillna(0).sum()
         crit_count = len(st.session_state.logs[st.session_state.logs['Category'] == 'Critical Event'])
+        
         m1, m2, m3 = st.columns(3)
-        m1.metric("Narcotics (Total)", f"{narc_sum}")
+        m1.metric("Narcotics (Total)", f"{int(narc_sum)}")
         m2.metric("Critical Events", f"{crit_count}", delta_color="inverse")
         m3.metric("Total Logs", len(st.session_state.logs))
-    except: pass
+    except Exception as e:
+        st.error(f"Calculation Error: {e}")
 
     st.dataframe(st.session_state.logs, use_container_width=True, hide_index=True)
