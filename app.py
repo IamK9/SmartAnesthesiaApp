@@ -6,18 +6,30 @@ import json
 
 # 1. SETUP
 st.set_page_config(page_title="Smart Anesthesia", page_icon="💉", layout="wide")
-st.markdown("""<style>.stButton>button {width: 100%; border-radius: 8px;}</style>""", unsafe_allow_html=True)
+st.markdown("""<style>.stButton>button {width: 100%; border-radius: 8px; background-color: #2E86C1; color: white;}</style>""", unsafe_allow_html=True)
 
-# 2. AI FUNCTION
+# 2. AI FUNCTION (ระบบค้นหาโมเดลอัตโนมัติ)
+def get_best_model():
+    """ฟังก์ชันหาชื่อโมเดลที่ใช้ได้จริงในขณะนั้น"""
+    try:
+        # ลองหาชื่อโมเดลที่มีคำว่า pro หรือ flash
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                if 'gemini-1.5-flash' in m.name: return 'gemini-1.5-flash'
+                if 'gemini-pro' in m.name: return 'gemini-pro'
+    except:
+        pass
+    return 'gemini-pro' # ถ้าหาไม่เจอเลย ให้ใช้ตัวนี้เป็นค่า Default
+
 def process_command(cmd):
     if "GEMINI_API_KEY" not in st.secrets:
         return {"error": "API Key Missing"}
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         
-        # --- ส่วนสำคัญ: ใช้ชื่อโมเดลล่าสุด ---
-        # ลองใช้ gemini-1.5-flash เพราะเป็นมาตรฐานปี 2025-2026
-        model = genai.GenerativeModel('gemini-1.5-flash') 
+        # --- ใช้ฟังก์ชันเลือกโมเดลอัตโนมัติ ---
+        model_name = get_best_model() 
+        model = genai.GenerativeModel(model_name)
         
         prompt = f"""
         Extract Item, Qty, Unit from: "{cmd}"
@@ -27,37 +39,37 @@ def process_command(cmd):
         response = model.generate_content(prompt)
         return json.loads(response.text.replace("```json", "").replace("```", "").strip())
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e) + f" (Model used: {model_name})"}
 
 # 3. UI
-st.title("Smart Anesthesia 💉")
-
-# --- 🛠️ ส่วนเช็คของ (DEBUGGER) ---
-with st.sidebar:
-    st.header("🔧 Debug Menu")
-    if st.button("เช็คชื่อโมเดลที่ใช้ได้ (List Models)"):
-        if "GEMINI_API_KEY" in st.secrets:
-            try:
-                genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                st.write("--- โมเดลที่ Server มองเห็น ---")
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        st.code(m.name) # มันจะโชว์ชื่อออกมา เช่น models/gemini-1.5-flash
-            except Exception as e:
-                st.error(f"เช็คไม่ได้: {e}")
-        else:
-            st.error("ยังไม่ใส่ API Key")
+c1, c2 = st.columns([1, 5])
+with c1: st.image("https://img.icons8.com/color/96/anesthetist.png", width=60)
+with c2: st.title("Smart Anesthesia")
 
 # --- MAIN APP ---
 cmd = st.text_input("ป้อนคำสั่ง:", key="cmd")
-if st.button("🚀 ส่งคำสั่ง (Submit)", type="primary"):
+if st.button("🚀 ส่งคำสั่ง (Submit)"):
     if cmd:
         with st.spinner("Processing..."):
             res = process_command(cmd)
             if "error" in res:
                 st.error(res['error'])
-                st.warning("👈 ลองกดปุ่ม 'เช็คชื่อโมเดล' ด้านซ้ายดูครับ ว่ามีชื่ออะไรบ้าง")
             else:
-                st.success(f"Saved: {res.get('item')}")
-                # (แสดง JSON ดิบๆ เพื่อความชัวร์)
-                st.json(res)
+                st.success(f"Saved: {res.get('item')} ({res.get('qty')} {res.get('unit')})")
+                
+                # Update Data
+                if 'logs' not in st.session_state: 
+                    st.session_state.logs = pd.DataFrame(columns=['Time','Item','Qty','Unit','Category'])
+                
+                new_row = {
+                    'Time': datetime.now().strftime("%H:%M:%S"),
+                    'Item': res.get('item'), 'Qty': res.get('qty'), 
+                    'Unit': res.get('unit'), 'Category': res.get('category')
+                }
+                st.session_state.logs = pd.concat([pd.DataFrame([new_row]), st.session_state.logs], ignore_index=True)
+
+# Dashboard
+if 'logs' in st.session_state and not st.session_state.logs.empty:
+    st.divider()
+    st.subheader("📊 Dashboard")
+    st.dataframe(st.session_state.logs, use_container_width=True, hide_index=True)
