@@ -32,9 +32,9 @@ with st.sidebar:
     all_options = sorted(list(set(real_models + backup_models)))
     
     # *** จุดสำคัญ: เลือก index ให้ตรงกับ gemini-1.5-flash ***
-    default_ix = 0
-    if "gemini-1.5-flash" in all_options:
-        default_ix = all_options.index("gemini-1.5-flash")
+default_ix = 0
+    if "gemini-2.0-flash" in all_options:
+        default_ix = all_options.index("gemini-2.0-flash")
     
     selected_model_name = st.selectbox("เลือก AI Model:", all_options, index=default_ix)
     st.info(f"Using: {selected_model_name}")
