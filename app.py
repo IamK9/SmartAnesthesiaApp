@@ -31,7 +31,7 @@ with st.sidebar:
     real_models = get_available_models()
     all_options = sorted(list(set(real_models + backup_models)))
     
-    # *** จุดสำคัญ: เลือก index ให้ตรงกับ gemini-1.5-flash ***
+    # *** จุดสำคัญ: เลือก index ให้ตรงกับ gemini-2.0-flash ***
 default_ix = 0
     if "gemini-2.0-flash" in all_options:
         default_ix = all_options.index("gemini-2.0-flash")
